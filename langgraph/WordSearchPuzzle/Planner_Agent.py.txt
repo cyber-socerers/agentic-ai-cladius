@@ -1,0 +1,190 @@
+from langchain_groq import ChatGroq
+
+class PlannerAgent:
+    """Analyzes user input and determines intent using LLM with structured output"""
+    
+    def __init__(self, llm: ChatGroq):
+        self.llm = llm
+    
+    def analyze_intent_structured(self, user_input: str) -> tuple[IntentType, Optional[str], Optional[str]]:
+        """Analyze user input with structured output"""
+        try:
+            intent_prompt = f"""
+Analyze the following user input and classify it with structured reasoning.
+
+Available intents:
+1. YOUTUBE_INGEST - User wants to process/ingest a YouTube video
+2. WEBPAGE_INGEST - User wants to process/ingest a webpage or URL  
+3. QNA - User is asking a question about previously ingested content
+4. PODCAST_CREATE - User wants to create an audio podcast
+5. MINDMAP_CREATE - User wants to create a mind map
+6. UNKNOWN - Intent doesn't match any category
+
+User Input: "{user_input}"
+
+Provide:
+- intent: The classified intent
+- confidence: How confident you are (0.0-1.0)
+- reasoning: Why you chose this intent
+- extracted_url: Any URL found in the input
+- extracted_topic: Topic for podcast creation (if applicable)
+
+Examples:
+Input: "Add this YouTube video https://youtube.com/watch?v=123"
+Output: {{"intent": "YOUTUBE_INGEST", "confidence": 0.95, "reasoning": "User explicitly wants to add/process a YouTube video with URL provided", "extracted_url": "https://youtube.com/watch?v=123", "extracted_topic": null}}
+
+Input: "What did the articles say about climate change?"
+Output: {{"intent": "QNA", "confidence": 0.9, "reasoning": "User is asking a question about previously ingested content", "extracted_url": null, "extracted_topic": null}}
+
+Respond with valid JSON matching the structure above. Do NOT include any additional text or explanations. ONLY return the JSON object"""
+            
+            response = self.llm.invoke(intent_prompt)
+            
+            # Try to parse JSON response
+            try:
+                import json
+                result_data = json.loads(response.content.strip())
+
+                # Log the raw response for debugging
+                logger.info(f"Raw structured response: {result_data}")
+
+                classification = IntentClassification(**result_data)
+                
+                # Convert to IntentType enum
+                intent_mapping = {
+                    "YOUTUBE_INGEST": IntentType.YOUTUBE_INGEST,
+                    "WEBPAGE_INGEST": IntentType.WEBPAGE_INGEST,
+                    "QNA": IntentType.QNA,
+                    "PODCAST_CREATE": IntentType.PODCAST_CREATE,
+                    "MINDMAP_CREATE": IntentType.MINDMAP_CREATE,
+                    "UNKNOWN": IntentType.UNKNOWN
+                }
+                
+                intent = intent_mapping.get(classification.intent, IntentType.UNKNOWN)
+                logger.info(f"Intent classified: {intent.value} (confidence: {classification.confidence})")
+                logger.info(f"Reasoning: {classification.reasoning}")
+                
+                return intent, classification.extracted_url, classification.extracted_topic
+                
+            except (json.JSONDecodeError, Exception) as e:
+                logger.warning(f"Failed to parse structured response, falling back to simple classification: {e}")
+                return self.analyze_intent(user_input), None, None
+                
+        except Exception as e:
+            logger.error(f"Error in structured intent analysis: {str(e)}")
+            return self.analyze_intent(user_input), None, None
+    
+    def analyze_intent(self, user_input: str) -> IntentType:
+        """Analyze user input to determine intent using LLM"""
+        try:
+            intent_prompt = f"""
+Analyze the following user input and classify it into one of these intents:
+
+1. YOUTUBE_INGEST - User wants to ingest/process a YouTube video (extract transcript, add to knowledge base)
+2. WEBPAGE_INGEST - User wants to ingest/process a webpage or URL (extract content, add to knowledge base)  
+3. QNA - User is asking a question about previously ingested content
+4. PODCAST_CREATE - User wants to create an audio podcast about a specific topic
+5. MINDMAP_CREATE - User wants to create a mind map
+6. UNKNOWN - Intent doesn't match any of the above categories
+
+User Input: "{user_input}"
+
+You must respond with ONLY the intent name (YOUTUBE_INGEST, WEBPAGE_INGEST, QNA, PODCAST_CREATE, MINDMAP_CREATE or UNKNOWN).
+
+Examples:
+- "Please add this YouTube video to my knowledge base: https://youtube.com/watch?v=123" → YOUTUBE_INGEST
+- "Can you process this article for me? https://example.com/article" → WEBPAGE_INGEST
+- "What did the video say about machine learning?" → QNA
+- "Generate a podcast discussion about climate change" → PODCAST_CREATE
+- "Hello there" → UNKNOWN
+
+Intent:"""
+            
+            response = self.llm.invoke(intent_prompt)
+            intent_str = response.content.strip().upper()
+            
+            # Map string response to IntentType enum
+            intent_mapping = {
+                "YOUTUBE_INGEST": IntentType.YOUTUBE_INGEST,
+                "WEBPAGE_INGEST": IntentType.WEBPAGE_INGEST,
+                "QNA": IntentType.QNA,
+                "PODCAST_CREATE": IntentType.PODCAST_CREATE,
+                "UNKNOWN": IntentType.UNKNOWN
+            }
+            
+            return intent_mapping.get(intent_str, IntentType.UNKNOWN)
+            
+        except Exception as e:
+            logger.error(f"Error in intent analysis: {str(e)}")
+            return IntentType.UNKNOWN
+    
+    def extract_url_from_input(self, user_input: str) -> Optional[str]:
+        """Extract URL from user input using LLM"""
+        try:
+            url_prompt = f"""
+Extract any URL from the following text. If there's no URL, respond with "NONE".
+
+Text: "{user_input}"
+
+Examples:
+- "Check out this video https://youtube.com/watch?v=abc123" → https://youtube.com/watch?v=abc123
+- "Process this page: www.example.com/article" → www.example.com/article  
+- "What do you think about AI?" → NONE
+
+URL:"""
+            
+            response = self.llm.invoke(url_prompt)
+            url = response.content.strip()
+            
+            if url == "NONE" or not url:
+                return None
+                
+            # Add https:// if missing
+            if not url.startswith(('http://', 'https://')):
+                url = 'https://' + url
+                
+            return url
+            
+        except Exception as e:
+            logger.error(f"Error extracting URL: {str(e)}")
+            # Fallback to regex
+            import re
+            url_pattern = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
+            urls = re.findall(url_pattern, user_input)
+            return urls[0] if urls else None
+    
+    def extract_topic_from_input(self, user_input: str) -> str:
+        """Extract topic for podcast creation using LLM"""
+        try:
+            topic_prompt = f"""
+Extract the main topic or subject for podcast creation from the following user input.
+Return only the topic/subject without any additional text.
+
+User Input: "{user_input}"
+
+Examples:
+- "Create a podcast about artificial intelligence and machine learning" → artificial intelligence and machine learning
+- "Generate an audio discussion on climate change impacts" → climate change impacts
+- "Make a podcast on the history of space exploration" → history of space exploration
+- "Create a podcast" → general discussion
+
+Topic:"""
+            
+            response = self.llm.invoke(topic_prompt)
+            topic = response.content.strip()
+            
+            return topic if topic else "general discussion"
+            
+        except Exception as e:
+            logger.error(f"Error extracting topic: {str(e)}")
+            # Fallback to simple extraction
+            words = user_input.split()
+            topic_start = -1
+            for i, word in enumerate(words):
+                if word.lower() in ["on", "about", "topic", "regarding", "concerning"]:
+                    topic_start = i + 1
+                    break
+            
+            if topic_start != -1 and topic_start < len(words):
+                return " ".join(words[topic_start:])
+            return "general discussion"
