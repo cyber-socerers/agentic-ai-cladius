@@ -1,17 +1,20 @@
 # LangGraph NotebookLM Clone
-# A CLI-based application with multiple agents for content ingestion and podcast generation
+# A CLI-based application with multiple agents for content ingestion and podcast generation .
 
 import os
 import sys
 import json
 import logging
 import asyncio
+import itertools
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 from enum import Enum
 import faiss
 import numpy as np
 from pathlib import Path
+from ImageHelper import ImageHelper
+import traceback
 
 # LangChain imports
 #from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -50,6 +53,7 @@ logger = logging.getLogger(__name__)
 
 
 class IntentType(Enum):
+    WORDSEARCH_PUZZLE = "wordsearch_puzzle"
     YOUTUBE_INGEST = "youtube_ingest"
     WEBPAGE_INGEST = "webpage_ingest"
     QNA = "qna"
@@ -66,6 +70,23 @@ class Config:
     vectorstore_path: str = "./vectorstore"
     chunk_size: int = 1000
     chunk_overlap: int = 200
+
+@dataclass
+class WordResult:
+    Gridcells:Any
+    word :str=None
+    startIndex:int=0
+    direction:str=None
+
+
+@dataclass
+class ResultWordSearchPuzzle:
+    Gridcells:Any   
+    wordResults :list[WordResult]
+
+
+
+ 
 
 
 class CustomEmbeddings(Embeddings):
@@ -97,7 +118,7 @@ class AgentState(TypedDict):
 
 class IntentClassification(BaseModel):
     """Structured output for intent classification"""
-    intent: Literal["YOUTUBE_INGEST", "WEBPAGE_INGEST", "QNA", "PODCAST_CREATE", "MINDMAP_CREATE", "UNKNOWN"] = Field(
+    intent: Literal["YOUTUBE_INGEST", "WEBPAGE_INGEST", "QNA", "PODCAST_CREATE", "MINDMAP_CREATE","WORDSEARCH_PUZZLE", "UNKNOWN"] = Field(
         description="The classified intent of the user input"
     )
     confidence: float = Field(
@@ -136,7 +157,8 @@ Available intents:
 3. QNA - User is asking a question about previously ingested content
 4. PODCAST_CREATE - User wants to create an audio podcast
 5. MINDMAP_CREATE - User wants to create a mind map
-6. UNKNOWN - Intent doesn't match any category
+6. WORDSEARCH_PUZZLE - User wants to solve a word search puzzle
+7. UNKNOWN - Intent doesn't match any category
 
 User Input: "{user_input}"
 
@@ -170,6 +192,7 @@ Respond with valid JSON matching the structure above. Do NOT include any additio
                 
                 # Convert to IntentType enum
                 intent_mapping = {
+                    "WORDSEARCH_PUZZLE":IntentType.WORDSEARCH_PUZZLE,
                     "YOUTUBE_INGEST": IntentType.YOUTUBE_INGEST,
                     "WEBPAGE_INGEST": IntentType.WEBPAGE_INGEST,
                     "QNA": IntentType.QNA,
@@ -203,7 +226,8 @@ Analyze the following user input and classify it into one of these intents:
 3. QNA - User is asking a question about previously ingested content
 4. PODCAST_CREATE - User wants to create an audio podcast about a specific topic
 5. MINDMAP_CREATE - User wants to create a mind map
-6. UNKNOWN - Intent doesn't match any of the above categories
+6. WORDSEARCH_PUZZLE - User wants to solve a word search puzzle
+7. UNKNOWN - Intent doesn't match any of the above categories
 
 User Input: "{user_input}"
 
@@ -223,6 +247,7 @@ Intent:"""
             
             # Map string response to IntentType enum
             intent_mapping = {
+                "WORDSEARCH_PUZZLE":IntentType.WORDSEARCH_PUZZLE,
                 "YOUTUBE_INGEST": IntentType.YOUTUBE_INGEST,
                 "WEBPAGE_INGEST": IntentType.WEBPAGE_INGEST,
                 "QNA": IntentType.QNA,
@@ -306,6 +331,361 @@ Topic:"""
             if topic_start != -1 and topic_start < len(words):
                 return " ".join(words[topic_start:])
             return "general discussion"
+
+
+
+class WordSearchPuzzleAgent:
+    """Handles YouTube video transcript ingestion"""
+
+    #def __init__(self, imageFilePath: str):
+    def __init__(self, embeddings: CustomEmbeddings, vectorstore_path: str):
+        self.imageFilePath="C:\\word-grid.jpg"
+        self.puzzleImageUrl="https://storagelangservice.file.core.windows.net/test-data/word-grid-Rajn.jpg?sv=2024-11-04&ss=bfqt&srt=o&sp=rl&se=2025-12-09T06:24:16Z&st=2025-12-08T22:09:16Z&spr=https&sig=FmUk9d%2Buxbix0RHGcKXJO4kIsbXRYWoz2jxGUFcxdtk%3D"
+        self.avenger_WordGrid_Json=[
+  ["K","J","C","Q","U","G","M","S","C","T","T","H","B","G","K","S","L","E","B","P"],
+  ["C","T","N","D","V","I","E","S","R","F","S","T","U","Y","L","J","G","I","O","M"],
+  ["A","Q","H","C","Z","I","V","C","U","S","R","M","D","L","J","T","M","C","U","W"],
+  ["I","U","P","M","T","H","I","A","U","R","W","Q","G","O","K","I","C","Z","E","N"],
+  ["F","O","Z","H","A","R","R","J","T","J","X","U","G","H","V","L","A","A","L","L"],
+  ["P","R","B","K","E","W","H","L","N","H","M","Q","V","K","G","A","C","M","Y","E"],
+  ["B","D","L","K","S","K","D","E","P","O","C","Y","N","M","L","I","N","O","G","Y"],
+  ["L","D","A","M","P","E","L","T","P","R","S","R","E","R","R","O","S","N","H","X"],
+  ["A","K","C","J","I","Y","Y","W","K","V","Y","E","R","E","R","G","A","T","G","S"],
+  ["C","U","K","N","D","E","I","I","H","N","E","J","M","I","Q","R","Q","M","X","I"],
+  ["K","V","P","I","E","M","R","T","M","Y","G","A","A","B","T","C","S","H","D","H"],
+  ["W","R","A","M","R","S","L","C","R","T","N","I","W","S","P","O","T","H","A","L"],
+  ["I","U","N","D","M","N","M","H","D","I","I","U","R","Y","N","H","A","R","F","I"],
+  ["D","F","T","Y","A","R","B","P","A","U","B","O","S","A","T","H","R","Z","B","W"],
+  ["O","Y","H","B","N","U","B","T","Q","D","T","R","Y","S","S","Z","X","L","B","K"],
+  ["W","R","E","H","O","G","P","C","U","C","G","A","J","U","U","M","O","F","B","Q"],
+  ["R","S","R","I","U","A","O","N","O","E","F","A","N","D","F","N","I","W","I","Y"],
+  ["L","O","N","O","C","E","M","D","X","P","I","V","A","W","X","R","D","T","R","I"],
+  ["C","S","Y","P","B","B","S","K","S","K","W","Z","W","O","X","J","Q","C","T","R"],
+  ["R","F","T","I","X","K","G","Y","R","E","M","J","N","X","T","W","B","I","R","G"]
+]
+
+
+    def SolveWordSearchPuzzle(self, url: str) -> bool:
+        """ Solve word search puzzle """
+        try:
+            logger.info(f" inside SolveWordSearchPuzzle()")            
+            dsd=2 
+            #charArrayOcr=readgrid_fromOCR()
+            GetCharsFromGrid_prompt=self.Get_CharArray_Prompt(self.puzzleImageUrl)
+            #charArray=self.extract_CharArray_from_ImageUrl(url)
+            #charArray =json.loads(self.Get_LLM_response( GetCharsFromGrid_prompt))
+            
+            charArray= self.avenger_WordGrid_Json
+ 
+            #charArray =json.dumps loads(self.avenger_WordGrid_Json.)            
+            logger.info(f" charArray len {len(charArray)}")     
+            char_array_2d = []
+            for row in charArray:
+                char_row = []
+                for char_str in row:
+                    #if isinstance(char_str, str) and len(char_str) == 1:
+                    char_row.append(char_str)
+                    """ else:
+                        char_row.append(str(char_str)[0] if str(char_str) else '') # Takes first char if available
+"""             
+                char_array_2d.append(char_row)
+                #logger.info(f" char_row: {char_row}")
+
+            #Get marvel aneger names list
+            ToSearchWords_Prompt=self.Get_wordsOutsideGrid_Prompt(url)
+            llmResp=self.Get_LLM_response(ToSearchWords_Prompt)
+
+            #ToSearchWords=json.loads(llmResp)
+            ToSearchWords=["CAPTAINAMERICA","BLACKWIDOW","THOR","HULK","IRONMAN","SPIDERMAN","WOLVERINE","ROCKET","GROOT","STARLORD","BLACKPANTHER","DRSTRANGE","ANTMANT","CAPTAINMARVEL","DEADPOOL"]
+
+            logger.info(f" ToSearchWords: {ToSearchWords}")
+
+            searchResults=self.PerformWordSearch(ToSearchWords,char_array_2d )
+
+            return True
+        except Exception as e:
+            logger.error(f"Error in solving the word search Puzzle : {str(e)} ; Stacktrace: {traceback.extract_stack()} ; print_exc: {traceback.print_exc()} ; format_exc: {traceback.format_exc} ; ")#error_traceback: {traceback.error_traceback()}
+            return False
+    """ 
+    #def get_words_to_search() -> str:
+    #def get_of_the_marvel_heros_on_image() -> str:   # get  list of marvel heros. names must be in uppercase & json format. remove spaces from names
+    
+    #def trav_to_Search_words(self) -> str: 
+        
+        #for right
+        #for left
+        #for down
+        #for up
+        #for primDiag
+        #for secDiag
+        #for revere     
+       # mark hero-name, start-co-ods, cell-co-ods[], direction
+    """
+    def PerformWordSearch(self, wordsList:list[str], grid:Any) -> ResultWordSearchPuzzle:
+        Finalresult= ResultWordSearchPuzzle( wordResults=[],Gridcells=[])
+        Finalresult=self.PerformWordSearchForHorizontalRows(wordsList,grid,Finalresult,isTransposed=False,isDiagonal=False)
+        #resultsPrimDiag=self.PerformWordSearchForPrimaryDiag(wordsList,grid,Finalresult)
+
+        transposed=self.TransposeGrid(grid)
+        Finalresult=self.PerformWordSearchForHorizontalRows(wordsList,transposed,Finalresult,isTransposed=True,isDiagonal=False)
+        
+        #resultsSecDiag=self.PerformWordSearchForPrimaryDiag(wordsList,grid,Finalresult)
+        #for i in range(Finalresult.wordResults):
+        logger.info(f"wordresults:  {len(Finalresult.wordResults)}")
+
+        return Finalresult
+              
+    def TransposeGrid(self,original_list:Any) -> any:
+        transposed_list = []
+        for j in range(len(original_list[0]) ):
+            new_row = []
+            for i in range(len(original_list)):
+                new_row.append(original_list[i][j])
+        transposed_list.append(new_row)
+        #logger.info(f"transposed_list {transposed_list}")
+
+        num_rows = len(original_list)
+        num_cols = len(original_list[0])  
+
+        transposed_list1 = [[original_list[r][c] for r in range(num_rows)] for c in range(num_cols)]
+        #logger.info(f"transposed_list1 {transposed_list1}")
+        return transposed_list1
+
+    def PerformWordSearchForHorizontalRows(self, wordsList:list[str], grid:Any,
+                    Finalresult:ResultWordSearchPuzzle, isTransposed:bool,isDiagonal:bool) -> ResultWordSearchPuzzle:
+
+        wordListLength=len(wordsList)
+        gridRows=len(grid)
+        gridCols=len(grid[0])
+        isWordReversed=False
+        
+        logger.info(f"grid W x H= {gridCols} x {gridRows}")
+        #result=ResultWordSearchPuzzle(wordResults=None)
+        # result.wordResults[0].
+        for rowTrav in range(gridRows):
+            forwardString="".join(grid[rowTrav])
+            #logger.info(f" rowTrav={rowTrav}")
+                         
+            for wordTrav in range(wordListLength):
+                wordH=wordsList[wordTrav]
+                isWordReversed=False
+                #logger.info(f"forwardString={forwardString}, wordH={wordH} , wordTrav={wordTrav} ; ")
+
+                if((len(Finalresult.wordResults) > 0)  and (any(getattr(obj, "word") == wordH for obj in Finalresult.wordResults))  ):
+                    continue
+                
+                wordResult=None
+                #horizontal L to R
+                wIndex=self.GetIndexOfWordSubstring(wordH ,forwardString)
+                if(wIndex > 0):
+                    DirectionAndLetterCells=self.GetWordDirectionAndLetterCells(len(wordH),rowTrav,wIndex,isTransposed,isDiagonal,isWordReversed)
+                    wdirection=DirectionAndLetterCells[0]
+                    cells=DirectionAndLetterCells[1]
+                    wordResult=WordResult ( word=  wordH,startIndex=wIndex, direction=wdirection,Gridcells=cells)
+                                           #direction= self.GetWordDirection(isTransposed,isDiagonal,isWordReversed)
+                                           #, Gridcells=self.GetGridCells(len(wordH),rowTrav,wIndex,isTransposed,isDiagonal,isWordReversed))
+                    logger.info(f" $$$$$$$$ found word: {wordH} ; RowString={forwardString}, wordH={wordH} , wordTrav={wordTrav} ; ")
+                    #if(Finalresult.wordResults is None):
+                    Finalresult.wordResults.append(wordResult)                        
+                    continue
+
+                #horizontal R to L #status = "Adult" if age >= 18 else "Minor"
+                isWordReversed=True
+                reverseString=forwardString[::-1]
+                reverseWord=wordH[::-1]
+                wIndex=gridCols-self.GetIndexOfWordSubstring(reverseWord,reverseString)-len(reverseWord)
+                if(wIndex > 0):
+                    DirectionAndLetterCells=self.GetWordDirectionAndLetterCells(len(wordH),rowTrav,wIndex,isTransposed,isDiagonal,isWordReversed)
+                    wdirection=DirectionAndLetterCells[0]
+                    cells=DirectionAndLetterCells[1]
+                    wordResult=WordResult ( word=  wordH,startIndex=wIndex, direction=wdirection,Gridcells=cells)
+                    #wordResult=WordResult ( word=  wordH,startIndex=len(gridCols)-wIndex, direction=self.GetWordDirection(isTransposed,isDiagonal,isWordReversed))
+                    logger.info(f" $$$$$$$$ found word: {wordH} ; RowString={forwardString}, wordH={wordH} , wordTrav={wordTrav} ; ")
+                    Finalresult.wordResults.append(wordResult)
+                    continue
+        logger.info(f" result {Finalresult.wordResults}")
+
+        return Finalresult
+    
+    def GetWordDirectionAndLetterCells(self,wordLen:int,rowTrav:int,wordIndex:int,isTransposed:bool,isDiagonal:bool,isWordReversed:bool) -> Any:
+        
+        direction=""
+        cells=[]
+        if (not isTransposed and not  isDiagonal and not isWordReversed):
+            direction= "Horizontal - Left to Right"
+            #for i in range(wordIndex,wordIndex + wordLen):            
+            cells.append(self.GetGridCellsHV(wordIndex, wordIndex + wordLen , rowTrav, isTransposed))            
+        elif (not isTransposed and not  isDiagonal and isWordReversed):         
+           direction=  "Horizontal - Right to Left"
+           start=wordIndex - wordLen
+           cells.append(self.GetGridCellsHV(wordIndex ,wordIndex + wordLen, rowTrav, isTransposed))
+
+        elif (isTransposed and not  isDiagonal and not isWordReversed): 
+           direction=  "Vertical - Top to Bottom"            
+           cells.append(self.GetGridCellsHV( wordIndex  , wordIndex+ wordLen, rowTrav, isTransposed))
+        elif (isTransposed and not  isDiagonal and isWordReversed):         
+           direction=  "Vertical - Bottom to Top"
+           cells.append(self.GetGridCellsHV(wordIndex ,wordIndex+ wordLen,rowTrav, isTransposed))
+
+        elif (not isTransposed and isDiagonal and not isWordReversed):         
+           direction=  "Diagonal - Left-Top to Right-Bottom"
+           #cells.append(self.GetGridCellsDiag (wordIndex + wordLen ,wordIndex,rowTrav, isTransposed))
+        elif (not isTransposed and isDiagonal and isWordReversed): 
+           direction=  "Diagonal - Right-Bottom to Left-Top"
+        elif ( isTransposed and isDiagonal and not isWordReversed): 
+           direction=  "Diagonal - Left-Bottom to Right-Top"        
+        else: 
+            direction=  "Diagonal - Right-Top to Left-Bottom"
+
+        return direction,cells
+        
+    def GetGridCellsHV( self,start:int, end:int, rowTrav:int, isTransposed ) -> Any:
+        cells=[]
+        for i in range(start,end):
+            if(not isTransposed):
+                cells.append([rowTrav,i])
+            else: 
+                cells.append([i,rowTrav])
+        return cells
+    
+    """def GetGridCellsDiag( start:int,end:int,rowTrav:int, isTransposed)-> Any:
+        cells=[]
+        for i in range(start,end):            
+            if(not isTransposed):
+                cells.append([rowTrav+i,i])
+        else: 
+            cells.append([i,rowTrav+1])
+        return cells"""
+
+    """def SearchDiagonally(self,original_list:Any,Finalresult:ResultWordSearchPuzzle) -> any:
+        transposed_list = []
+        for j in range(len(original_list[0]) ):
+            new_row = []
+            for i in range(len(original_list)):
+                new_row.append(original_list[i][j])
+        transposed_list.append(new_row)
+        logger.info(f"transposed_list {transposed_list}")"""
+
+    
+    """  
+        #vertical T-to B
+        transposed_list = []
+        for j in range(gridCols):
+        new_row = []
+        for i in range(gridRows):
+        new_row.append(original_list[i][j])
+        transposed_list.append(new_row)
+
+        transposed_columns = itertools.zip_longest(*grid, fillvalue='')
+        logger.info(f"transposed_columns:   {transposed_columns}")        
+        #vertical_strings_padded = ["".join(col).rstrip() for col in transposed_columns]
+        for colTrav in range(gridCols):
+            forwardString=transposed_columns[colTrav]
+            for wordTrav in range(wordListLength):
+
+                wordV=wordsList[wordTrav]
+                if((result.wordResults is not None)  and any(getattr(obj, "word") == wordV for obj in result)  ):
+                    continue
+                    
+                wordResult=None
+                #horizontal L to R
+                wIndex=self.GetIndexOfWordSubstring(forwardString, wordV)
+                if(wIndex > 0):
+                    wordResult=WordResult ( word=  wordV,startIndex=wIndex,
+                                            direction="horizontal-L-to-R")
+                    result.wordResults.append(wordResult)
+                    continue
+                #horizontal R to L
+                reverseString=forwardString[::-1]
+                reverseWord=wordV[::-1]
+                wIndex=self.GetIndexOfWordSubstring(forwardString,wordV)
+                if(wIndex > 0):
+                    wordResult=WordResult ( word=  wordV,startIndex=wIndex,
+                                            direction="horizontal-R-to-L")
+                    result.wordResults.append(wordResult)
+                    continue
+        return result
+    """  
+    def GetIndexOfWordSubstring(self, word:str, row:str)-> int:
+        try:
+            #logger.info(f"word = {word} ,rowWord= {row}")
+            return row.index(word)
+        except ValueError as e:
+            return 0  
+
+
+    def create_htmlOutput() -> str:
+        html=""        
+        #loop thru the char array 
+
+
+    def Get_CharArray_Prompt(self, url: str) -> str:
+        prompt = f""" 
+            Extract the characters from within the grid in image and return as json array 
+            User Input: image url {url} """
+        return prompt
+    
+    def Get_wordsOutsideGrid_Prompt(self, url: str) -> str:
+        prompt = f""" 
+            Extract the words from outside the grid in image and return as json array 
+            User Input: image url {url} """
+        prompt = f""" 
+            Get all the list of names of Marvel Avengers & super-heros in json array format, in uppercase and without whitespaces in name. return only the list """
+        return prompt
+        
+        
+
+
+    def Get_LLM_response(self, prompt: str) -> str:
+        """ LLM """
+        try:
+            config = load_config()
+            llm = ChatGroq(api_key=config.groq_api_key, model_name="llama-3.1-8b-instant")
+          
+            logger.info(f"LLM prompt formed:  {prompt}")
+            response = llm.invoke(prompt)
+            resp = response.content.strip()
+            logger.info(f"llm response : {resp}")
+            return resp 
+            
+        except Exception as e:
+            logger.error(f"Error in extracting char array from image: {str(e)}")
+            return None
+        
+    def extract_CharArray_from_ImageUrl(self, base64image: str) -> str:
+        """Extract topic for podcast creation using LLM"""
+        try:
+            config = load_config()
+            llm = ChatGroq(api_key=config.groq_api_key, model_name="llama-3.1-8b-instant")
+            
+            GetCharsFromGrid_prompt = f"""
+                Extract the characters from the grid in image and return as json array 
+                User Input: image url {base64image}
+                """            
+            logger.info(f"LLM prompt formed:  {GetCharsFromGrid_prompt}")             
+            resp =self.Get_LLM_response( GetCharsFromGrid_prompt) 
+
+            logger.error(f"CharArray : {resp}")
+            return resp #if topic else "general discussion"
+            
+        except Exception as e:
+            logger.error(f"Error in extracting char array from image: {str(e)}")
+            # Fallback  
+           
+            return None
+                
+    def Get_base64Str_from_localImage(self, imgPath: str) -> str:
+        """invoke LLM and get the char array"""
+        try:        
+            logger.info(f"image path: {imgPath}")
+            base64Str=ImageHelper.image_to_base64_string(imgPath)
+            logger.info(f"Successfully read image as string: Str-Length {len(base64Str)}  ") 
+            return base64Str
+                    
+        except Exception as e:
+            logger.error(f"Error in Get_base64Str_from_localImage : {str(e)}")
+            return None
+        
 
 
 class YouTubeIngesterAgent:
@@ -675,6 +1055,8 @@ class NotebookLMApp:
         
         # Initialize agents
         self.planner = PlannerAgent(self.llm)
+        
+        self.wordsearch_puzzle_solver = WordSearchPuzzleAgent(self.embeddings, config.vectorstore_path)
         self.youtube_ingester = YouTubeIngesterAgent(self.embeddings, config.vectorstore_path)
         self.webpage_ingester = WebpageIngesterAgent(self.embeddings, config.vectorstore_path)
         self.qna_agent = QnAAgent(self.llm, self.embeddings, config.vectorstore_path)
@@ -701,6 +1083,7 @@ class NotebookLMApp:
         workflow.add_node("podcast_transcript", self._podcast_transcript_node)
         workflow.add_node("podcast_audio", self._podcast_audio_node)
         workflow.add_node("mindmap_create", self._generate_mindmap_node)
+        workflow.add_node("wordsearch_puzzle_solver", self._wordSearchPuzzle_node)
         workflow.add_node("respond", self._respond_node)
         
         # Set entry point
@@ -716,6 +1099,7 @@ class NotebookLMApp:
                 "qna": "qna",
                 "podcast_create": "qna",  # First retrieve content
                 "mindmap_create": "qna",  # First retrieve content
+                "wordsearch_puzzle":"wordsearch_puzzle_solver",
                 "unknown": "respond"
             }
         )
@@ -726,6 +1110,7 @@ class NotebookLMApp:
         workflow.add_edge("mindmap_create", "respond")
         workflow.add_edge("podcast_transcript", "podcast_audio")
         workflow.add_edge("podcast_audio", "respond")
+        workflow.add_edge("wordsearch_puzzle_solver", "respond")        
         workflow.add_edge("respond", END)
         
         # Add conditional edge from qna for podcast creation
@@ -748,7 +1133,7 @@ class NotebookLMApp:
         state["intent"] = intent.value
         
         # Use extracted values or fall back to individual extraction methods
-        if intent in [IntentType.YOUTUBE_INGEST, IntentType.WEBPAGE_INGEST]:
+        if intent in [IntentType.YOUTUBE_INGEST, IntentType.WEBPAGE_INGEST, IntentType.WORDSEARCH_PUZZLE]:
             state["url"] = extracted_url or self.planner.extract_url_from_input(state["user_input"])
         elif intent in [IntentType.PODCAST_CREATE, IntentType.MINDMAP_CREATE]:
             state["topic"] = extracted_topic or self.planner.extract_topic_from_input(state["user_input"])
@@ -824,6 +1209,13 @@ class NotebookLMApp:
         """Final response node"""
         if not state.get("response"):
             state["response"] = "I'm not sure how to help with that. Please try rephrasing your request."
+        return state
+    
+    def _wordSearchPuzzle_node(self, state: AgentState) -> AgentState:
+        """ Solve word search puzzle """
+        logger.info("inside _wordSearchPuzzle_node")
+        charArray = self.wordsearch_puzzle_solver.SolveWordSearchPuzzle(state["url"]) 
+        logger.info("completed _wordSearchPuzzle_node")
         return state
     
     def _route_intent(self, state: AgentState) -> str:
