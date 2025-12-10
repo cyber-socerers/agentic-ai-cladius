@@ -1,5 +1,5 @@
 # LangGraph NotebookLM Clone
-# A CLI-based application with multiple agents for content ingestion and podcast generation
+# A CLI-based application with multiple agents for content ingestion and podcast generation .
 
 import os
 import sys
