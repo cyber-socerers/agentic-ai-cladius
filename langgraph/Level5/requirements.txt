@@ -1,0 +1,5 @@
+faiss-cpu
+#langchain-text-splitters sentence-transformers
+#pip install -U langchain langchain-core
+#pip install beautifulsoup4
+#pip install youtube-transcript-api

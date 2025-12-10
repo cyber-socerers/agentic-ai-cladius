@@ -1,7 +1,8 @@
 from dotenv import find_dotenv, load_dotenv
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import SentenceTransformersTokenTextSplitter
+#from langchain.text_splitter import SentenceTransformersTokenTextSplitter
+from langchain_text_splitters import SentenceTransformersTokenTextSplitter
 import chromadb
 from langchain_chroma import Chroma
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
@@ -19,7 +20,7 @@ load_dotenv(find_dotenv())
 llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0)
 
 # Load a PDF file (resume) using LangChain's PyPDFLoader
-pdf_loader = PyPDFLoader("C:\\Users\\LENOVO\\Desktop\\Agentic AI\\Langgraph-Rag\\RAG\\Khushboo-Patil-Resume.pdf") # Specify the path to your resume PDF
+pdf_loader = PyPDFLoader("C:\\inas-Code\\agentic-ai-master\\langgraph\\Level 4\\test-resume2.pdf") # Specify the path to your resume PDF
 pages = pdf_loader.load() # Load all pages as document objects
 
 # Split the loaded PDF pages into smaller text chunks for embedding

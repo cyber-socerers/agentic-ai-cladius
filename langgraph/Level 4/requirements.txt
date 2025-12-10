@@ -5,3 +5,5 @@ sentence-transformers
 chromadb
 langchain_chroma
 langgraph
+langchain
+#langchain-text-splitters sentence-transformers

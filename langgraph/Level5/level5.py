@@ -14,11 +14,13 @@ import numpy as np
 from pathlib import Path
 
 # LangChain imports
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+#from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import WebBaseLoader, YoutubeLoader
 from langchain_community.vectorstores import FAISS
 from langchain_groq import ChatGroq
-from langchain.schema import Document
+#from langchain.schema import Document
+from langchain_core.documents import Document
 from langchain.embeddings.base import Embeddings
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
@@ -666,7 +668,7 @@ class NotebookLMApp:
         self.config = config
         
         # Initialize LLM
-        self.llm = ChatGroq(api_key=config.groq_api_key, model_name="llama3-8b-8192")
+        self.llm = ChatGroq(api_key=config.groq_api_key, model_name="llama-3.1-8b-instant")
         
         # Initialize embeddings
         self.embeddings = CustomEmbeddings(config.embeddings_model)

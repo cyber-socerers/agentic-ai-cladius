@@ -1,7 +1,8 @@
 import os
 from typing import Annotated, TypedDict
 from langchain_groq import ChatGroq
-from langgraph.prebuilt import create_react_agent
+#from langgraph.prebuilt import create_react_agent
+from langchain.agents import create_agent
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage
 from langgraph.graph.message import add_messages
@@ -54,4 +55,5 @@ llm = ChatGroq(groq_api_key=groq_api_key, model="openai/gpt-oss-20b")
 # -------------------- State Definition --------------------
 
 # Create the agent using the built-in create_react_agent
-graph = create_react_agent(llm, tools)
+#graph = create_react_agent(llm, tools)
+graph = create_agent(llm, tools)
