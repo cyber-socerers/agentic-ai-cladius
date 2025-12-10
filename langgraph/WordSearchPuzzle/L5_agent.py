@@ -1,11 +1,11 @@
 # LangGraph NotebookLM Clone
-# A CLI-based application with multiple agents for content ingestion and podcast generation .
+# A CLI-based application with multiple agents for content ingestion and podcast generation
 
 import os
 import sys
 import json
 import logging
-import asyncio
+import asyncio 
 import itertools
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
@@ -486,15 +486,17 @@ class WordSearchPuzzleAgent:
                                            #, Gridcells=self.GetGridCells(len(wordH),rowTrav,wIndex,isTransposed,isDiagonal,isWordReversed))
                     logger.info(f" $$$$$$$$ found word: {wordH} ; RowString={forwardString}, wordH={wordH} , wordTrav={wordTrav} ; ")
                     #if(Finalresult.wordResults is None):
-                    Finalresult.wordResults.append(wordResult)                        
+                    Finalresult.wordResults.append(wordResult) 
+                    wIndex=0                       
                     continue
 
                 #horizontal R to L #status = "Adult" if age >= 18 else "Minor"
                 isWordReversed=True
                 reverseString=forwardString[::-1]
-                reverseWord=wordH[::-1]
-                wIndex=gridCols-self.GetIndexOfWordSubstring(reverseWord,reverseString)-len(reverseWord)
+                #reverseWord=wordH #[::-1]
+                wIndex=self.GetIndexOfWordSubstring(wordH,reverseString)
                 if(wIndex > 0):
+                    wIndex=gridCols-wIndex-len(wordH)
                     DirectionAndLetterCells=self.GetWordDirectionAndLetterCells(len(wordH),rowTrav,wIndex,isTransposed,isDiagonal,isWordReversed)
                     wdirection=DirectionAndLetterCells[0]
                     cells=DirectionAndLetterCells[1]
@@ -502,6 +504,7 @@ class WordSearchPuzzleAgent:
                     #wordResult=WordResult ( word=  wordH,startIndex=len(gridCols)-wIndex, direction=self.GetWordDirection(isTransposed,isDiagonal,isWordReversed))
                     logger.info(f" $$$$$$$$ found word: {wordH} ; RowString={forwardString}, wordH={wordH} , wordTrav={wordTrav} ; ")
                     Finalresult.wordResults.append(wordResult)
+                    wIndex=0
                     continue
         logger.info(f" result {Finalresult.wordResults}")
 
